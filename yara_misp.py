@@ -332,7 +332,7 @@ def attr_to_yara_source(
     extra_meta['type'] = getattr(attr, 'type', '')
 
     if related_evt is not None:
-        extra_meta['event_info'] = related_evt.event_info
+        extra_meta['event_info'] = related_evt.info
 
     if misp_url is not None:
         extra_meta['event_link'] = (
