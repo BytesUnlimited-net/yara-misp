@@ -26,7 +26,9 @@ SOURCE_ATTRIBUTE_TYPES = {
     "filename|sha256",
     "hex",
     "ip-dst|port",
+    "ip-dst",
     "ip-src|port",
+    "ip-src",
     "hostname|port",
     "domain|ip",
 }
@@ -111,7 +113,6 @@ def process_event(misp, event):
 
         # Never process existing YARA attributes as source attributes.
         if attr.type == "yara":
-            skipped += 1
             continue
 
         # Only process explicitly configured types.
