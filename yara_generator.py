@@ -33,8 +33,6 @@ SOURCE_ATTRIBUTE_TYPES = {
     "domain|ip",
 }
 
-PAGE_SIZE = 100
-
 # If True, only attributes with to_ids=True are converted.
 ONLY_TO_IDS = False
 
@@ -58,7 +56,7 @@ logger = logging.getLogger(__name__)
 # Event processing
 # ---------------------------------------------------------------------------
 
-def process_event(misp, event):
+def process_event(event):
     """
     Convert selected attributes in one MISP event into YARA attributes.
 
@@ -69,44 +67,7 @@ def process_event(misp, event):
     attribute is deleted and a new one is created.
     """
 
-    # Map:
-    #
-    #   source MISP attribute UUID
-    #       ->
-    #   generated YARA MISP attribute UUID
-    #
-    existing_yara_rules = {}
-
-    for attr in event.attributes:
-        if attr.type != "yara":
-            continue
-
-        if not attr.value:
-            continue
-
-        marker = "attr_uuid = "
-
-        if marker not in attr.value:
-            continue
-
-        try:
-            source_uuid = (
-                attr.value
-                .split(marker, 1)[1]
-                .splitlines()[0]
-                .strip()
-                .strip('"')
-            )
-        except (IndexError, AttributeError):
-            continue
-
-        if not source_uuid:
-            continue
-
-        existing_yara_rules[source_uuid] = attr.uuid
-
     created = 0
-    replaced = 0
     skipped = 0
 
     for attr in event.attributes:
@@ -148,54 +109,14 @@ def process_event(misp, event):
             )
             continue
 
-        # ---------------------------------------------------------------
-        # Check whether this source attribute already has a YARA rule.
-        # ---------------------------------------------------------------
-
-        existing_yara_rule = existing_yara_rules.get(attr.uuid)
-
-        if existing_yara_rule:
-            logger.info(
-                "Existing YARA attribute %s found for source attribute %s "
-                "in event %s; deleting old rule",
-                existing_yara_rule,
-                attr.uuid,
-                event.id,
-            )
-
-            try:
-                misp.delete_attribute(existing_yara_rule)
-                replaced += 1
-            except Exception:
-                logger.exception(
-                    "Failed deleting existing YARA attribute %s "
-                    "for source attribute %s",
-                    existing_yara_rule,
-                    attr.uuid,
-                )
-                continue
 
         # ---------------------------------------------------------------
         # Create the new YARA attribute.
         # ---------------------------------------------------------------
 
-        yara_attribute = {
-            "type": "yara",
-            "category": "Payload delivery",
-            "value": yara_rule,
-            "to_ids": YARA_TO_IDS,
-            "comment": (
-                "Automatically generated from MISP attribute "
-                f"{attr.uuid} ({attr.type})"
-            ),
-        }
-
         try:
-            misp.add_attribute(
-                event.id,
-                yara_attribute,
-                break_on_duplicate=True,
-            )
+
+            # TODO: Do something with the yara_rule here
 
             created += 1
 
@@ -214,7 +135,7 @@ def process_event(misp, event):
                 attr.uuid,
             )
 
-    return created, replaced, skipped
+    return created, skipped
 
 
 # ---------------------------------------------------------------------------
@@ -233,21 +154,20 @@ def main():
 
     total_events = 0
     total_created = 0
-    total_replaced = 0
     total_skipped = 0
 
     while True:
 
         logger.info(
             "Fetching events: page=%d, limit=%d",
-            page,
-            PAGE_SIZE,
+            1,
+            20,
         )
 
         events = misp.search(
             controller="events",
-            page=page,
-            limit=PAGE_SIZE,
+            limit=20,
+            order='timestamp DESC',
             pythonify=True,
         )
 
@@ -269,24 +189,19 @@ def main():
                 pythonify=True,
             )
 
-            created, replaced, skipped = process_event(
-                misp,
+            created, skipped = process_event(
                 event,
             )
 
             total_created += created
-            total_replaced += replaced
             total_skipped += skipped
 
-        if len(events) < PAGE_SIZE:
+        if True:
             break
-
-        page += 1
 
     logger.info("Finished.")
     logger.info("Events processed: %d", total_events)
     logger.info("YARA attributes created: %d", total_created)
-    logger.info("YARA attributes replaced: %d", total_replaced)
     logger.info("YARA attributes skipped: %d", total_skipped)
 
 
