@@ -2,6 +2,7 @@
 
 import os
 import logging
+from pathlib import Path
 
 from pymisp import PyMISP
 from yara_misp import attr_to_yara_source
@@ -38,6 +39,9 @@ ONLY_TO_IDS = False
 
 # Whether newly created YARA attributes should have to_ids=True.
 YARA_TO_IDS = True
+
+# The folder where the yara files are created
+OUT_DIR = "/tmp/yara/"
 
 
 # ---------------------------------------------------------------------------
@@ -116,7 +120,9 @@ def process_event(event):
 
         try:
 
-            # TODO: Do something with the yara_rule here
+            path = Path(f"{OUT_DIR}/{attr.uuid}.txt")
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text(yara_rule)
 
             created += 1
 
@@ -149,8 +155,6 @@ def main():
         ssl=True,
         debug=False,
     )
-
-    page = 1
 
     total_events = 0
     total_created = 0
