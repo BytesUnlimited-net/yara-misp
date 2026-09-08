@@ -120,7 +120,7 @@ def process_event(event):
 
         try:
 
-            path = Path(f"{OUT_DIR}/{attr.uuid}.txt")
+            path = Path(f"{OUT_DIR}/{attr.uuid}.yar")
             path.parent.mkdir(parents=True, exist_ok=True)
             path.write_text(yara_rule)
 
