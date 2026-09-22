@@ -12,8 +12,8 @@ from yara_misp import attr_to_yara_source
 # Configuration
 # ---------------------------------------------------------------------------
 
-MISP_URL = os.environ["MISP_URL"]
-MISP_KEY = os.environ["MISP_KEY"]
+MISP_URL = os.environ.get("MISP_URL", "")
+MISP_KEY = os.environ.get("MISP_KEY", "")
 
 # Attribute types that should be converted to YARA.
 SOURCE_ATTRIBUTE_TYPES = {
@@ -41,7 +41,7 @@ ONLY_TO_IDS = False
 YARA_TO_IDS = True
 
 # The folder where the yara files are created
-OUT_DIR = "/tmp/yara/"
+OUT_DIR = "/tmp/custom-signatures/yara/"
 
 
 # ---------------------------------------------------------------------------
