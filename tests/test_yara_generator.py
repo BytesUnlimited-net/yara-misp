@@ -5,7 +5,7 @@ import pytest
 from unittest.mock import MagicMock
 from pymisp import PyMISP
 
-import yara_generator
+import src.yara_generator as yara_generator
 
 @pytest.fixture
 def misp(monkeypatch) -> MagicMock:

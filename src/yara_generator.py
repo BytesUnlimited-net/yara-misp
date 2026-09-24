@@ -5,7 +5,7 @@ import logging
 from pathlib import Path
 
 from pymisp import PyMISP
-from yara_misp import attr_to_yara_source
+from src.yara_misp import attr_to_yara_source
 
 
 # ---------------------------------------------------------------------------

@@ -1,12 +1,11 @@
 
 import os
-from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import MagicMock, call
 
 import pytest
 
-import yara_scan
+import src.yara_scan as yara_scan
 
 
 # -------------------------------------------------------------------
@@ -453,3 +452,53 @@ def test_uses_custom_misp_url(
         "http://custom-misp/events/view/123/"
         "focus:abc-123"
     ) in output
+
+
+def test_yara_compile_error(
+    mock_yara_dir,
+    target_file,
+    monkeypatch,
+):
+    yara_dir, compiled_file = mock_yara_dir
+
+    rule_file = yara_dir / "invalid.yar"
+    rule_file.write_text("invalid yara syntax")
+
+    monkeypatch.setattr(
+        yara_scan.yara,
+        "compile",
+        MagicMock(
+            side_effect=RuntimeError("Compilation failed")
+        ),
+    )
+
+    with pytest.raises(RuntimeError, match="Compilation failed"):
+        yara_scan.main(target_file)
+
+    def test_yara_load_error(
+            mock_yara_dir,
+            target_file,
+            monkeypatch,
+    ):
+        yara_dir, compiled_file = mock_yara_dir
+
+        rule_file = yara_dir / "test.yar"
+        rule_file.write_text("rule TestRule { condition: true }")
+
+        compiled_file.write_bytes(b"invalid compiled rules")
+
+        os.utime(rule_file, (100, 100))
+        os.utime(compiled_file, (200, 200))
+
+        monkeypatch.setattr(
+            yara_scan.yara,
+            "load",
+            MagicMock(
+                side_effect=RuntimeError("Load failed")
+            ),
+        )
+
+        with pytest.raises(RuntimeError, match="Load failed"):
+            yara_scan.main(target_file)
+
+

@@ -1,6 +1,6 @@
 # test_yara_generator.py
 
-from yara_misp import attr_to_yara_source
+from src.yara_misp import attr_to_yara_source
 
 def test_ignored_attribute(misp_event, misp_attribute):
     misp_attribute.type = "comment"
