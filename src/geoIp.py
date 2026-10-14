@@ -13,11 +13,11 @@ from pymisp import PyMISP, MISPAttribute
 # Configuration
 # ---------------------------------------------------------------------------
 
-MISP_URL = os.getenv("MISP_URL")
-MISP_API_KEY = os.getenv("MISP_KEY")
+MISP_URL = os.environ["MISP_URL"]
+MISP_API_KEY = os.environ["MISP_KEY"]
 
 # Your own GeoIP REST API
-GEOIP_URL = os.getenv("GEOIP_URL")
+GEOIP_URL = os.environ["GEOIP_URL"]
 
 # Optional authentication for your GeoIP API
 GEOIP_API_KEY = os.getenv("GEOIP_API_KEY")
@@ -76,30 +76,16 @@ def lookup_geoip(ip: str) -> dict[str, Any] | None:
     Adjust this function if your actual API has a different schema.
     """
 
-    if ip:
-      return {
-        "continent": "Nordamerika",
-        "country": "US",
-        "region": "Virginia",
-        "city": "Ashburn",
-        "latitude": 39.0469,
-        "longitude": -77.4903,
-        "metro_code": 511,
-        "accuracy_radius": 1000,
-        "time_zone": "America/New_York"
-    }
-
     headers = {
         "Accept": "application/json",
     }
 
     if GEOIP_API_KEY:
-        headers["Authorization"] = f"Bearer {GEOIP_API_KEY}"
+        headers["x-token"] = GEOIP_API_KEY
 
     try:
         response = requests.get(
-            GEOIP_URL,
-            params={"ip": ip},
+            GEOIP_URL + ip,
             headers=headers,
             timeout=GEOIP_TIMEOUT,
             verify=GEOIP_VERIFY_SSL,
@@ -109,14 +95,28 @@ def lookup_geoip(ip: str) -> dict[str, Any] | None:
 
         data = response.json()
 
-        if not isinstance(data, dict):
+        if not isinstance(data, dict) or not data.get("city"):
             logger.warning(
                 "GeoIP API returned unexpected response for %s",
                 ip,
             )
             return None
 
-        return data
+        geo_data = data["city"]
+        city = geo_data.get("city", "")
+        subdivisions = geo_data.get("subdivisions", "")
+
+        return {
+            "continent": geo_data["continent"]["names"]["en"],
+            "country": geo_data["country"]["names"]["en"],
+            "region": subdivisions and subdivisions[0]["names"]["en"],
+            "city": city and city["names"]["en"],
+            "latitude": geo_data["location"]["latitude"],
+            "longitude": geo_data["location"]["longitude"],
+            "metro_code": geo_data["location"].get("metro_code", ""),
+            "accuracy_radius": geo_data["location"]["accuracy_radius"],
+            "time_zone": geo_data["location"]["time_zone"],
+        }
 
     except requests.RequestException as exc:
         logger.error("GeoIP request failed for %s: %s", ip, exc)

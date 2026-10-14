@@ -1,11 +1,11 @@
 #!/usr/bin/env python3
 
 """
-Tests for misp_geoip_worker.py
+Tests for geoIp.py
 
 Run with:
 
-    pytest -v test_misp_geoip_worker.py
+    pytest -v test_geoIp.py
 
 The tests do not require a running MISP instance or GeoIP API.
 """
@@ -22,7 +22,7 @@ import pytest
 # Import helper
 # ---------------------------------------------------------------------------
 
-MODULE_NAME = "misp_geoip_worker"
+MODULE_NAME = "src.geoIp"
 
 
 @pytest.fixture
@@ -35,7 +35,7 @@ def worker():
 
     env = {
         "MISP_URL": "https://misp.example.test",
-        "MISP_API_KEY": "test-misp-api-key",
+        "MISP_KEY": "test-misp-api-key",
         "GEOIP_URL": "https://geoip.example.test/lookup",
     }
 
@@ -59,19 +59,19 @@ class TestConfiguration:
 
     def test_missing_misp_url_is_reported(self):
         env = {
-            "MISP_API_KEY": "test-key",
+            "MISP_KEY": "test-key",
             "GEOIP_URL": "https://geoip.example.test",
         }
 
         with patch.dict(os.environ, env, clear=True):
             sys.modules.pop(MODULE_NAME, None)
 
-            with pytest.raises(RuntimeError) as exc:
+            with pytest.raises(KeyError) as exc:
                 importlib.import_module(MODULE_NAME)
 
         assert "MISP_URL" in str(exc.value)
 
-    def test_missing_misp_api_key_is_reported(self):
+    def test_missing_MISP_KEY_is_reported(self):
         env = {
             "MISP_URL": "https://misp.example.test",
             "GEOIP_URL": "https://geoip.example.test",
@@ -80,21 +80,21 @@ class TestConfiguration:
         with patch.dict(os.environ, env, clear=True):
             sys.modules.pop(MODULE_NAME, None)
 
-            with pytest.raises(RuntimeError) as exc:
+            with pytest.raises(KeyError) as exc:
                 importlib.import_module(MODULE_NAME)
 
-        assert "MISP_API_KEY" in str(exc.value)
+        assert "MISP_KEY" in str(exc.value)
 
     def test_missing_geoip_url_is_reported(self):
         env = {
             "MISP_URL": "https://misp.example.test",
-            "MISP_API_KEY": "test-key",
+            "MISP_KEY": "test-key",
         }
 
         with patch.dict(os.environ, env, clear=True):
             sys.modules.pop(MODULE_NAME, None)
 
-            with pytest.raises(RuntimeError) as exc:
+            with pytest.raises(KeyError) as exc:
                 importlib.import_module(MODULE_NAME)
 
         assert "GEOIP_URL" in str(exc.value)
@@ -163,13 +163,23 @@ class TestGeoIPFormatting:
 
 class TestGeoIPLookup:
 
-    @patch("misp_geoip_worker.requests.get")
+    @patch("src.geoIp.requests.get")
     def test_successful_geoip_lookup(self, mock_get, worker):
         mock_response = MagicMock()
         mock_response.json.return_value = {
-            "country": "US",
-            "region": "Virginia",
-            "city": "Ashburn",
+            "city": {
+                "continent": { "names": { "en": "Nordamerika" } },
+                "country": { "names": { "en": "US" } },
+                "subdivisions": [{ "names": { "en": "Virginia" } }],
+                "city": { "names": { "en": "Ashburn" } },
+                "location": {
+                    "latitude": 40,
+                    "longitude": -80,
+                    "metro_code": 511,
+                    "accuracy_radius": 1000,
+                    "time_zone": "America/New_York",
+                },
+            },
         }
         mock_response.raise_for_status.return_value = None
 
@@ -178,19 +188,25 @@ class TestGeoIPLookup:
         result = worker.lookup_geoip("8.8.8.8")
 
         assert result == {
+            "continent": "Nordamerika",
             "country": "US",
             "region": "Virginia",
             "city": "Ashburn",
+            "latitude": 40,
+            "longitude": -80,
+            "metro_code": 511,
+            "accuracy_radius": 1000,
+            "time_zone": "America/New_York",
         }
 
         mock_get.assert_called_once()
 
         kwargs = mock_get.call_args.kwargs
 
-        assert kwargs["params"] == {"ip": "8.8.8.8"}
+        assert mock_get.call_args_list[0].args[0].endswith("8.8.8.8")
         assert kwargs["headers"]["Accept"] == "application/json"
 
-    @patch("misp_geoip_worker.requests.get")
+    @patch("src.geoIp.requests.get")
     def test_geoip_api_failure_returns_none(self, mock_get, worker):
         import requests
 
@@ -202,7 +218,7 @@ class TestGeoIPLookup:
 
         assert result is None
 
-    @patch("misp_geoip_worker.requests.get")
+    @patch("src.geoIp.requests.get")
     def test_invalid_json_returns_none(self, mock_get, worker):
         mock_response = MagicMock()
         mock_response.raise_for_status.return_value = None
@@ -214,7 +230,7 @@ class TestGeoIPLookup:
 
         assert result is None
 
-    @patch("misp_geoip_worker.requests.get")
+    @patch("src.geoIp.requests.get")
     def test_unexpected_response_returns_none(self, mock_get, worker):
         mock_response = MagicMock()
         mock_response.raise_for_status.return_value = None
@@ -226,7 +242,7 @@ class TestGeoIPLookup:
 
         assert result is None
 
-    @patch("misp_geoip_worker.requests.get")
+    @patch("src.geoIp.requests.get")
     def test_geoip_api_key_is_sent_when_configured(
         self,
         mock_get,
@@ -251,7 +267,7 @@ class TestGeoIPLookup:
 
         headers = mock_get.call_args.kwargs["headers"]
 
-        assert headers["Authorization"] == "Bearer secret-api-key"
+        assert headers["x-token"] == "secret-api-key"
 
 
 # ---------------------------------------------------------------------------
@@ -316,7 +332,7 @@ class TestAttributeDiscovery:
 
 class TestAttributeEnrichment:
 
-    @patch("misp_geoip_worker.lookup_geoip")
+    @patch("src.geoIp.lookup_geoip")
     def test_attribute_comment_is_updated(
         self,
         mock_lookup,
@@ -359,7 +375,7 @@ class TestAttributeEnrichment:
             pythonify=False,
         )
 
-    @patch("misp_geoip_worker.lookup_geoip")
+    @patch("src.geoIp.lookup_geoip")
     def test_existing_comment_is_preserved(
         self,
         mock_lookup,
@@ -396,7 +412,7 @@ class TestAttributeEnrichment:
             < attribute.comment.index("[GeoIP]")
         )
 
-    @patch("misp_geoip_worker.lookup_geoip")
+    @patch("src.geoIp.lookup_geoip")
     def test_failed_geoip_lookup_does_not_modify_attribute(
         self,
         mock_lookup,
@@ -422,7 +438,7 @@ class TestAttributeEnrichment:
 
         misp.update_attribute.assert_not_called()
 
-    @patch("misp_geoip_worker.lookup_geoip")
+    @patch("src.geoIp.lookup_geoip")
     def test_misp_update_failure_returns_false(
         self,
         mock_lookup,
@@ -458,8 +474,8 @@ class TestAttributeEnrichment:
 
 class TestProcessing:
 
-    @patch("misp_geoip_worker.enrich_attribute")
-    @patch("misp_geoip_worker.find_unenriched_attributes")
+    @patch("src.geoIp.enrich_attribute")
+    @patch("src.geoIp.find_unenriched_attributes")
     def test_process_once_processes_all_attributes(
         self,
         mock_find,
@@ -503,8 +519,8 @@ class TestProcessing:
             attribute3,
         )
 
-    @patch("misp_geoip_worker.enrich_attribute")
-    @patch("misp_geoip_worker.find_unenriched_attributes")
+    @patch("src.geoIp.enrich_attribute")
+    @patch("src.geoIp.find_unenriched_attributes")
     def test_process_once_does_nothing_when_no_attributes(
         self,
         mock_find,
@@ -526,8 +542,8 @@ class TestProcessing:
 
 class TestSecurity:
 
-    @patch("misp_geoip_worker.requests.get")
-    def test_misp_api_key_is_not_sent_to_geoip_api(
+    @patch("src.geoIp.requests.get")
+    def test_MISP_KEY_is_not_sent_to_geoip_api(
         self,
         mock_get,
         worker,
