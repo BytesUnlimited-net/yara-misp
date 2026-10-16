@@ -16,10 +16,7 @@ from pymisp import PyMISP, MISPAttribute
 MISP_URL = os.environ["MISP_URL"]
 MISP_API_KEY = os.environ["MISP_KEY"]
 
-# Your own GeoIP REST API
 GEOIP_URL = os.environ["GEOIP_URL"]
-
-# Optional authentication for your GeoIP API
 GEOIP_API_KEY = os.getenv("GEOIP_API_KEY")
 
 # Verify TLS certificates when talking to MISP / GeoIP API
@@ -29,13 +26,10 @@ GEOIP_VERIFY_SSL = os.getenv("GEOIP_VERIFY_SSL", "true").lower() == "true"
 # How often the worker checks MISP
 POLL_INTERVAL = int(os.getenv("POLL_INTERVAL", "300"))
 
-# Maximum number of attributes processed in one cycle
-BATCH_SIZE = int(os.getenv("BATCH_SIZE", "100"))
-
 # HTTP timeout for the GeoIP API
 GEOIP_TIMEOUT = int(os.getenv("GEOIP_TIMEOUT", "10"))
 
-# Marker used to identify our enrichment in the MISP comment
+# Marker used to identify the enrichment in the MISP comment
 GEOIP_MARKER = "[GeoIP]"
 
 
@@ -72,8 +66,6 @@ def lookup_geoip(ip: str) -> dict[str, Any] | None:
         "accuracy_radius": 1000,
         "time_zone": "America/New_York"
     }
-
-    Adjust this function if your actual API has a different schema.
     """
 
     headers = {
@@ -179,7 +171,6 @@ def get_misp() -> PyMISP:
 
 def find_unenriched_attributes(
     misp: PyMISP,
-    limit: int,
 ) -> list[MISPAttribute]:
     """
     Find ip-src and ip-dst attributes that do not already contain
@@ -191,8 +182,8 @@ def find_unenriched_attributes(
 
     attributes = misp.search(
         controller="attributes",
-        type_attribute=["ip-src", "ip-dst"],
-        limit=limit,
+        type_attribute=["ip-src", "ip-dst", "ip-src|port", "ip-dst|port"],
+        offset=0,
         pythonify=True,
     )
 
@@ -215,7 +206,7 @@ def enrich_attribute(
     Look up the IP and update the existing MISP attribute comment.
     """
 
-    ip = attribute.value
+    ip = attribute.value.split("|")[0]
 
     logger.info(
         "GeoIP lookup: attribute=%s type=%s ip=%s",
@@ -276,10 +267,7 @@ def process_once(misp: PyMISP) -> None:
     Process one batch of IP attributes.
     """
 
-    attributes = find_unenriched_attributes(
-        misp,
-        BATCH_SIZE,
-    )
+    attributes = find_unenriched_attributes(misp)
 
     if not attributes:
         logger.info("No un-enriched IP attributes found.")
