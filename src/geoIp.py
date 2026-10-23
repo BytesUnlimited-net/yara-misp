@@ -2,11 +2,12 @@
 
 import logging
 import os
+from datetime import datetime, timezone
 import time
 from typing import Any
 
 import requests
-from pymisp import PyMISP, MISPAttribute
+from pymisp import PyMISP, MISPAttribute, MISPObject
 
 
 # ---------------------------------------------------------------------------
@@ -60,9 +61,9 @@ def lookup_geoip(ip: str) -> dict[str, Any] | None:
         "country": "US",
         "region": "Virginia",
         "city": "Ashburn",
+        "zip_code": 20149,
         "latitude": 39.0469,
         "longitude": -77.4903,
-        "metro_code": 511,
         "accuracy_radius": 1000,
         "time_zone": "America/New_York"
     }
@@ -95,17 +96,18 @@ def lookup_geoip(ip: str) -> dict[str, Any] | None:
             return None
 
         geo_data = data["city"]
-        city = geo_data.get("city", "")
         subdivisions = geo_data.get("subdivisions", "")
+        city = geo_data.get("city", "")
+        zip_code = geo_data.get("postal", "")
 
         return {
             "continent": geo_data["continent"]["names"]["en"],
             "country": geo_data["country"]["names"]["en"],
             "region": subdivisions and subdivisions[0]["names"]["en"],
             "city": city and city["names"]["en"],
+            "zip_code": zip_code and zip_code["code"],
             "latitude": geo_data["location"]["latitude"],
             "longitude": geo_data["location"]["longitude"],
-            "metro_code": geo_data["location"].get("metro_code", ""),
             "accuracy_radius": geo_data["location"]["accuracy_radius"],
             "time_zone": geo_data["location"]["time_zone"],
         }
@@ -134,15 +136,15 @@ def format_geoip_comment(data: dict[str, Any]) -> str:
     ]
 
     fields = [
+        ("Continent", "continent"),
         ("Country", "country"),
         ("Region", "region"),
         ("City", "city"),
-        ("Continent", "continent"),
+        ("Zip code", "zip_code"),
         ("Latitude", "latitude"),
         ("Longitude", "longitude"),
         ("Accuracy radius", "accuracy_radius"),
         ("Timezone", "time_zone"),
-        ("Metro code", "metro_code"),
     ]
 
     for label, key in fields:
@@ -235,10 +237,25 @@ def enrich_attribute(
     attribute.comment = new_comment
 
     try:
-        misp.update_attribute(
-            attribute,
-            pythonify=False,
-        )
+        ip_object = MISPObject("ip-api-address")
+        ip_object.add_attribute("ip-src", ip)
+
+        created: MISPObject = misp.add_object(attribute.event_id, ip_object, pythonify=True)
+
+        fields = [
+            ("Country", "country"),
+            ("Region", "region"),
+            ("City", "city"),
+            ("Zipcode", "zip_code"),
+            ("Latitude", "latitude"),
+            ("Longitude", "longitude"),
+        ]
+        for label, key in fields:
+            created.add_attribute(label, geoip[key])
+
+        created.add_attribute("First-seen", datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"))
+
+        misp.update_object(created, pythonify=True)
 
         logger.info(
             "Updated GeoIP comment: attribute=%s ip=%s",
