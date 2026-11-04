@@ -22,16 +22,13 @@ GEOIP_API_KEY = os.getenv("GEOIP_API_KEY")
 
 # Verify TLS certificates when talking to MISP / GeoIP API
 MISP_VERIFY_SSL = os.getenv("MISP_VERIFY_SSL", "false").lower() == "true"
-GEOIP_VERIFY_SSL = os.getenv("GEOIP_VERIFY_SSL", "true").lower() == "true"
+GEOIP_VERIFY_SSL = os.getenv("GEOIP_VERIFY_SSL", "false").lower() == "true"
 
 # How often the worker checks MISP
 POLL_INTERVAL = int(os.getenv("POLL_INTERVAL", "300"))
 
 # HTTP timeout for the GeoIP API
 GEOIP_TIMEOUT = int(os.getenv("GEOIP_TIMEOUT", "10"))
-
-# Marker used to identify the enrichment in the MISP comment
-GEOIP_MARKER = "[GeoIP]"
 
 
 # ---------------------------------------------------------------------------
@@ -103,7 +100,7 @@ def lookup_geoip(ip: str) -> dict[str, Any] | None:
         return {
             "continent": geo_data["continent"]["names"]["en"],
             "country": geo_data["country"]["names"]["en"],
-            "region": subdivisions and subdivisions[0]["names"]["en"],
+            "region": subdivisions and ", ".join(region["names"]["en"] for region in subdivisions),
             "city": city and city["names"]["en"],
             "zip_code": zip_code and zip_code["code"],
             "latitude": geo_data["location"]["latitude"],
@@ -119,41 +116,6 @@ def lookup_geoip(ip: str) -> dict[str, Any] | None:
     except ValueError as exc:
         logger.error("Invalid JSON from GeoIP API for %s: %s", ip, exc)
         return None
-
-
-# ---------------------------------------------------------------------------
-# Comment formatting
-# ---------------------------------------------------------------------------
-
-def format_geoip_comment(data: dict[str, Any]) -> str:
-    """
-    Convert the GeoIP API response into a compact human-readable
-    MISP attribute comment.
-    """
-
-    lines = [
-        GEOIP_MARKER,
-    ]
-
-    fields = [
-        ("Continent", "continent"),
-        ("Country", "country"),
-        ("Region", "region"),
-        ("City", "city"),
-        ("Zip code", "zip_code"),
-        ("Latitude", "latitude"),
-        ("Longitude", "longitude"),
-        ("Accuracy radius", "accuracy_radius"),
-        ("Timezone", "time_zone"),
-    ]
-
-    for label, key in fields:
-        value = data.get(key)
-
-        if value is not None and value != "":
-            lines.append(f"{label}: {value}")
-
-    return "\n".join(lines)
 
 
 # ---------------------------------------------------------------------------
@@ -185,16 +147,36 @@ def find_unenriched_attributes(
     attributes = misp.search(
         controller="attributes",
         type_attribute=["ip-src", "ip-dst", "ip-src|port", "ip-dst|port"],
-        offset=0,
         pythonify=True,
     )
+
+    event_ids = sorted({
+        int(attr.event_id)
+        for attr in attributes
+        if attr.event_id is not None
+    })
+
+    if event_ids:
+        events = misp.search(
+            controller="events",
+            eventid=event_ids,
+            pythonify=True,
+        )
+    else:
+        events = []
+
+    linked_ip_uuids = {
+        ref.referenced_uuid
+        for event in events
+        for obj in event.objects
+        if obj.name == "geolocation"
+        for ref in obj.references
+    }
 
     result: list[MISPAttribute] = []
 
     for attribute in attributes:
-        comment = getattr(attribute, "comment", None) or ""
-
-        if GEOIP_MARKER not in comment:
+        if attribute.uuid not in linked_ip_uuids:
             result.append(attribute)
 
     return result
@@ -222,43 +204,35 @@ def enrich_attribute(
     if geoip is None:
         return False
 
-    geoip_comment = format_geoip_comment(geoip)
-
-    existing_comment = getattr(attribute, "comment", None) or ""
-
-    if existing_comment.strip():
-        new_comment = (
-            f"{existing_comment.rstrip()}\n\n"
-            f"{geoip_comment}"
-        )
-    else:
-        new_comment = geoip_comment
-
-    attribute.comment = new_comment
-
     try:
-        ip_object = MISPObject("ip-api-address")
-        ip_object.add_attribute("ip-src", ip)
-
-        created: MISPObject = misp.add_object(attribute.event_id, ip_object, pythonify=True)
+        new_object = MISPObject("geolocation")
 
         fields = [
-            ("Country", "country"),
-            ("Region", "region"),
-            ("City", "city"),
-            ("Zipcode", "zip_code"),
-            ("Latitude", "latitude"),
-            ("Longitude", "longitude"),
+            ("city", "city"),
+            ("region", "region"),
+            ("country", "country"),
+            ("zipcode", "zip_code"),
+            ("latitude", "latitude"),
+            ("longitude", "longitude"),
+            ("accuracy-radius", "accuracy_radius"),
         ]
         for label, key in fields:
-            created.add_attribute(label, geoip[key])
+            new_object.add_attribute(label, geoip[key])
 
-        created.add_attribute("First-seen", datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"))
+        new_object.add_attribute("last-seen", datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"))
 
-        misp.update_object(created, pythonify=True)
+        created_object = misp.add_object(event=attribute.event_id, misp_object=new_object, pythonify=True)
+
+        # Reference the existing IP attribute from the geolocation object
+        reference = created_object.add_reference(
+            referenced_uuid=attribute.uuid,
+            relationship_type="located",
+            comment="Geo-IP information for this IP address",
+        )
+        misp.add_object_reference(reference)
 
         logger.info(
-            "Updated GeoIP comment: attribute=%s ip=%s",
+            "Updated GeoIP attribute: attribute=%s ip=%s",
             attribute.uuid,
             ip,
         )
